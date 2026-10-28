@@ -1,0 +1,2 @@
+{"id": "demo-000", "parent": "pallet", "child": "plastic pallet", "child_prefix": "plastic", "child_suffix": "pallet", "modifier": "plastic", "family": "pallet", "source": "synthetic engineering demo; not ECLASS or benchmark gold"}
+{"id": "demo-001", "parent": "pallet", "child": "steel pallet", "child_prefix": "steel", "child_suffix": "pallet", "modifier": "steel", "family": "pallet", "source": "synthetic engineering demo; not ECLASS or benchmark gold"}

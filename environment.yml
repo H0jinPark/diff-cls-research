@@ -1,0 +1,10 @@
+name: diff-cls-research
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pip
+  - pip:
+      # Run conda env create from this project's root directory.
+      # Install runtime + test dependencies from pyproject.toml.
+      - '-e .[test]'

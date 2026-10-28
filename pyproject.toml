@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "diff-cls-research"
+version = "0.1.0"
+description = "Controlled DIFF-minus-CLS experiments for semantic refinement classification"
+requires-python = ">=3.10"
+dependencies = ["torch>=2.2,<3", "transformers>=4.44,<5", "safetensors>=0.4,<1"]
+
+[project.optional-dependencies]
+test = ["pytest>=8,<9"]
+
+[project.scripts]
+diffcls = "diffcls.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
