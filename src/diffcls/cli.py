@@ -37,6 +37,7 @@ def main():
     train_parser.add_argument("--contrastive-epochs", type=int, default=0, help="Stage 1 alignment epochs; 0 disables")
     train_parser.add_argument("--contrastive-lr", type=float, default=2e-5)
     train_parser.add_argument("--contrastive-temperature", type=float, default=0.1)
+    train_parser.add_argument("--selection-metric", choices=["macro_f1", "weighted_f1"], default="macro_f1")
     for name in ("evaluate", "predict"):
         p = sub.add_parser(name)
         for flag in ("checkpoint", "data", "output"):

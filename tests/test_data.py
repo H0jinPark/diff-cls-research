@@ -50,3 +50,12 @@ def test_metrics_known_confusion():
     assert m['accuracy'] == 0.75
     assert m['macro_f1'] == pytest.approx((2/3 + 0.8)/2)
     assert m['weighted_f1'] == pytest.approx((2/3 + 0.8)/2)
+
+
+def test_weighted_f1_matches_support_weighting():
+    m = metrics([0, 0, 0, 1], [0, 0, 1, 1], ['a', 'b'])
+    assert m['per_label']['a']['f1'] == pytest.approx(.8)
+    assert m['per_label']['b']['f1'] == pytest.approx(2 / 3)
+    assert m['weighted_f1'] == pytest.approx((3 * .8 + 2 / 3) / 4)
+    assert m['weighted_precision'] == pytest.approx((3 * 1.0 + .5) / 4)
+    assert m['weighted_recall'] == pytest.approx(.75)

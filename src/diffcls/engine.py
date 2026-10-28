@@ -73,6 +73,9 @@ def train(args):
     cl_epochs = getattr(args, "contrastive_epochs", 0)
     cl_lr = getattr(args, "contrastive_lr", 2e-5)
     temperature = getattr(args, "contrastive_temperature", 0.1)
+    selection_metric = getattr(args, "selection_metric", "macro_f1")
+    if selection_metric not in ("macro_f1", "weighted_f1"):
+        raise ValueError("Unknown validation selection metric")
     if cl_epochs < 0 or not 0 < temperature or not 0 < cl_lr:
         raise ValueError("contrastive epochs must be nonnegative; temperature and learning rate must be positive")
     if cl_epochs and (args.mode not in ("diff_cls", "concat_cls") or args.batch_size < 2):
@@ -167,9 +170,10 @@ def train(args):
             count += len(targets)
         result, _ = run_eval(model, dev_loader, device, labels)
         history.append(dict(epoch=epoch, train_loss=total / count, dev=result))
-        print(json.dumps({"epoch": epoch, "train_loss": total / count, "dev_macro_f1": result["macro_f1"]}), flush=True)
-        if result["macro_f1"] > best:
-            best = result["macro_f1"]
+        print(json.dumps({"epoch": epoch, "train_loss": total / count, "dev_macro_f1": result["macro_f1"],
+                          "dev_weighted_f1": result["weighted_f1"], "selection_metric": selection_metric}), flush=True)
+        if result[selection_metric] > best:
+            best = result[selection_metric]
             config["best_epoch"] = epoch
             save_checkpoint(out / "best", model, tokenizer, config)
         write_json(out / "history.json", history)
