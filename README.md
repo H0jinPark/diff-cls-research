@@ -12,6 +12,8 @@ z = h_diff - h_base → MLP → 세분화 기준
 
 ## 설치
 
+Linux RTX 5080 서버 설정 및 실행 방법은 [docs/RTX_5080.md](docs/RTX_5080.md)를 참고하세요.
+
 Python 3.10 이상. 프로젝트 폴더에서:
 
 ```bash
@@ -66,6 +68,33 @@ UTF-8 CSV 또는 JSONL. 각 행은 아래 문자열 필드를 포함합니다.
 
 Tratz의 modifier–head 관계 라벨을 compound–head 대조 입력으로 변환할 경우 **파생 평가 설정**이라고 명시해야 합니다. 원본 릴리스마다 형식·라벨이 달라 자동 다운로드나 임의 라벨 변환을 하지 않습니다. CSV를 위 표준 필드에 맞춰 준비하면 바로 사용할 수 있습니다. ECLASS 원본은 포함하지 않습니다.
 
+### PANIC의 Tratz 벤치마크 실행
+
+받아둔 `data/benchmarks/panic` 폴더의 Tratz 기반 TSV를 변환합니다. PANIC이 제공한 train/val/test 분할과 라벨을 그대로 보존하고, 각 입력 파일의 SHA-256과 분할 간 단어 중복을 `manifest.json`에 남깁니다. 분할 폴더는 기존 파일을 덮어쓰지 않습니다.
+
+```bash
+python -m diffcls.cli prepare-tratz \
+  --source data/benchmarks/panic \
+  --granularity coarse --split-type lexical \
+  --output data/splits/tratz-coarse-lexical
+
+python -m diffcls.cli train \
+  --train data/splits/tratz-coarse-lexical/train.jsonl \
+  --dev data/splits/tratz-coarse-lexical/dev.jsonl \
+  --output runs/tratz-bert-experiment \
+  --model prajjwal1/bert-tiny --mode diff_cls \
+  --epochs 5 --batch-size 32 --lr 0.00005 --max-length 32
+
+python -m diffcls.cli evaluate \
+  --checkpoint runs/tratz-bert-experiment/best \
+  --data data/splits/tratz-coarse-lexical/test.jsonl \
+  --output runs/tratz-bert-experiment/test
+```
+
+`--model prajjwal1/bert-tiny`는 영어 사전학습 BERT입니다. 최초 실행에는 모델 다운로드가 필요합니다. 고정 모델 대신 `google-bert/bert-base-cased`로도 실험할 수 있지만 훨씬 많은 시간과 메모리가 듭니다. `--device auto`가 기본입니다. coarse/fine 및 random/lexical을 각각 지정할 수 있습니다. PANIC lexical 분할은 random보다 작으며, 실제 중복 여부는 `manifest.json`으로 확인하세요.
+
+중요: Tratz 라벨은 복합명사의 modifier–head 사이 어휘 관계입니다. 위 변환에서 `parent=head`, `child=modifier + head`는 **실험용 텍스트 구성**이며 해당 관계가 OWL `subClassOf`라는 의미가 아닙니다. 이 실험 결과만으로 ECLASS 또는 IOF 매핑 성능을 주장할 수 없습니다.
+
 ## 학습 / 평가 / 추론
 
 ```bash
@@ -79,9 +108,36 @@ diffcls predict --checkpoint runs/eclass-diff/best --data data/private/unlabeled
 
 ## 비교 실험
 
+### 2단계 대조학습 실험
+
+`--contrastive-epochs`를 지정하면 `diff_cls`와 `concat_cls` 모델이 1단계 alignment를 실행합니다. 학습 데이터의 `[DIFF]`와 기본어 `[CLS]` hidden state를 L2 정규화해 코사인 유사도를 구하고, 같은 head 쌍은 positive, 다른 head 쌍은 in-batch negative인 대칭 multi-positive InfoNCE를 적용합니다. 같은 head가 배치에 반복될 때 false negative로 취급하지 않습니다. negative가 없는 배치는 건너뜁니다. 이 단계는 train 데이터만 이용합니다.
+
+2단계는 1단계 BERT 가중치를 이어받아 정규화 **전** hidden state를 차이(`diff_cls`) 또는 이어 붙인 표현(`concat_cls`)으로 분류합니다. 별도 projection head는 없으며, 분류 단계에서도 BERT와 분류기를 함께 업데이트합니다. 따라서 수식어 정보 보존이나 최종 시점에서 alignment가 유지되는 것은 보장하지 않습니다. 대조 손실과 별도로 관계 분류 성능 및 임베딩 변화 분석이 필요합니다. `contrastive-history.json`, `contrastive-encoder.safetensors`, 그리고 분류 단계의 `history.json`과 `best/`가 저장됩니다. 1단계 선택 시 2단계의 학습 데이터 섞는 순서가 달라질 수 있고, 각 baseline 대비 총 훈련량이 늘어납니다.
+
+```bash
+export HF_HOME="$PWD/.hf-cache"
+python scripts/compare_dev.py \
+  --output "runs/contrastive-comparison-$(date +%Y%m%d-%H%M%S)" \
+  --contrastive-epochs 3 --contrastive-lr 0.00002 \
+  --contrastive-temperature 0.1 --epochs 20 --seeds 13 42 77 --device cpu
+```
+
+이 비교에서 1단계는 `diff_cls`와 `concat_cls`에 적용되며 나머지 모델은 기존의 단일 분류 단계로 학습합니다. 동일 조건의 `--contrastive-epochs 0` 결과도 비교해야 alignment 효과를 확인할 수 있습니다. `--tiny`는 무작위 초기화 모델이라 개발용입니다. 자동 이어학습 기능은 없습니다.
+
+테스트셋을 사용하지 않고 여러 seed의 검증 결과만 비교하려면:
+
+```bash
+export HF_HOME="$PWD/.hf-cache"
+python scripts/compare_dev.py --output "runs/dev-comparison-$(date +%Y%m%d-%H%M%S)"
+```
+
+기본값은 coarse lexical, 사전학습 `prajjwal1/bert-tiny`, `diff_cls`와 `concat_cls`, seed 13/42/77, 각 10 epoch, CPU입니다. 각 실행에서 가장 좋은 dev Macro-F1의 epoch를 선택하고 `summary.json`에 평균, 표본 표준편차, seed별 점수, 대응 seed 간 차이를 기록합니다. 조기 종료는 하지 않습니다. 결과를 보며 설정을 반복 변경하면 검증셋에 과적합될 수 있으므로 최종 test는 실험 설정 확정 후 평가하세요. 실행 도중 중단되면 완료 결과가 남지만 자동 재개는 지원하지 않습니다.
+
 | mode | 입력 표현 |
 |---|---|
-| `diff_cls` | A의 DIFF − B의 CLS (제안) |
+| `diff_cls` | A의 DIFF − B의 CLS |
+| `concat_cls` | [A의 DIFF; B의 CLS], 256차원(`bert-tiny`) |
+| `pair_interaction` | [A의 DIFF; B의 CLS; 절대 차이; 원소곱], 512차원(`bert-tiny`) |
 | `cls_cls` | 마커 없는 A의 CLS − B의 CLS |
 | `diff_only` | A의 DIFF만 (뺄셈 효과 검사) |
 | `modifier_only` | 수식어만 인코딩한 CLS (단어 암기 기준 모델) |

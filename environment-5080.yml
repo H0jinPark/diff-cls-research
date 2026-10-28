@@ -1,0 +1,8 @@
+name: diff-cls-5080
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+# Install the CUDA-compatible PyTorch wheel first, then the project.
+# Exact commands and GPU checks: docs/RTX_5080.md

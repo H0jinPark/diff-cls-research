@@ -49,3 +49,4 @@ def test_metrics_known_confusion():
     assert m['confusion_matrix'] == [[1,1],[0,2]]
     assert m['accuracy'] == 0.75
     assert m['macro_f1'] == pytest.approx((2/3 + 0.8)/2)
+    assert m['weighted_f1'] == pytest.approx((2/3 + 0.8)/2)

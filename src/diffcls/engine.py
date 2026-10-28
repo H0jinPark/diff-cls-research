@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader
 from transformers import AutoConfig, AutoModel, AutoTokenizer, BertConfig, BertModel, BertTokenizerFast
 
 from .data import read_rows, write_json, write_rows, metrics, audit_splits, fingerprint
-from .model import PairClassifier, Collator
+from .model import PairClassifier, Collator, contrastive_loss
 
 
 def device_for(name):
@@ -70,6 +70,13 @@ def load_checkpoint(path, device):
 def train(args):
     if args.epochs < 1 or args.batch_size < 1 or args.lr <= 0 or args.max_length < 4:
         raise ValueError("epochs/batch_size/lr/max_length must be positive and max_length >= 4")
+    cl_epochs = getattr(args, "contrastive_epochs", 0)
+    cl_lr = getattr(args, "contrastive_lr", 2e-5)
+    temperature = getattr(args, "contrastive_temperature", 0.1)
+    if cl_epochs < 0 or not 0 < temperature or not 0 < cl_lr:
+        raise ValueError("contrastive epochs must be nonnegative; temperature and learning rate must be positive")
+    if cl_epochs and (args.mode not in ("diff_cls", "concat_cls") or args.batch_size < 2):
+        raise ValueError("Contrastive alignment requires diff_cls or concat_cls mode and batch-size >= 2")
     out = Path(args.output)
     if out.exists() and any(out.iterdir()):
         raise ValueError(f"Output must be empty to avoid overwriting a run: {out}")
@@ -111,6 +118,38 @@ def train(args):
                   transformers_version=transformers.__version__, python_version=platform.python_version(),
                   train_sha256=fingerprint(args.train), dev_sha256=fingerprint(args.dev))
     write_json(out / "data-audit.json", audit)
+    if cl_epochs:
+        # Only training rows are used for alignment. Same-head examples are multi-positive.
+        keys_by_id = {r["id"]: r["parent"].strip().casefold() for r in train_rows}
+        cl_optimizer = torch.optim.AdamW(model.encoder.parameters(), lr=cl_lr, weight_decay=args.weight_decay)
+        cl_history = []
+        for epoch in range(1, cl_epochs + 1):
+            model.train()
+            total, used, skipped = 0.0, 0, 0
+            for batch in train_loader:
+                child, parent, pos, _, ids = move(batch, device)
+                cl_optimizer.zero_grad(set_to_none=True)
+                hc, hp = model.representations(child, parent, pos)
+                loss = contrastive_loss(hc, hp, [keys_by_id[i] for i in ids], temperature)
+                if loss is None:
+                    skipped += 1
+                    continue
+                if not torch.isfinite(loss):
+                    raise RuntimeError("Non-finite contrastive loss")
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.encoder.parameters(), 1.0)
+                cl_optimizer.step()
+                total += loss.item()
+                used += 1
+            if not used:
+                raise ValueError("No contrastive batches with multiple distinct heads")
+            cl_history.append({"epoch": epoch, "contrastive_loss": total / used,
+                               "batches_used": used, "batches_skipped": skipped})
+            write_json(out / "contrastive-history.json", cl_history)
+            print(json.dumps({"phase": "contrastive", **cl_history[-1]}), flush=True)
+        save_file({k: v.detach().cpu().contiguous() for k, v in model.encoder.state_dict().items()},
+                  str(out / "contrastive-encoder.safetensors"))
+        # The classification optimizer was constructed before phase 1 but has no state yet.
     history, best = [], -1.0
     for epoch in range(1, args.epochs + 1):
         model.train()

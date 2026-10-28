@@ -130,6 +130,7 @@ def metrics(gold, predictions, labels):
         recall = tp / support if support else 0.0
         f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
         by_label[label] = dict(precision=precision, recall=recall, f1=f1, support=support)
-    return dict(accuracy=sum(g == p for g, p in zip(gold, predictions)) / len(gold),
+    weighted_f1 = sum(v["f1"] * v["support"] for v in by_label.values()) / len(gold)
+    return dict(accuracy=sum(g == p for g, p in zip(gold, predictions)) / len(gold), weighted_f1=weighted_f1,
                 macro_f1=sum(v["f1"] for v in by_label.values()) / len(labels),
                 per_label=by_label, confusion_matrix=matrix, label_order=labels)

@@ -1,12 +1,16 @@
 import torch
 from torch import nn
 
-MODES = ("diff_cls", "cls_cls", "diff_only", "modifier_only")
+MODES = ("diff_cls", "concat_cls", "pair_interaction", "cls_cls", "diff_only", "modifier_only")
 
 
 def feature_vector(child, parent, mode):
     if mode in ("diff_cls", "cls_cls"):
         return child - parent
+    if mode == "concat_cls":
+        return torch.cat((child, parent), dim=-1)
+    if mode == "pair_interaction":
+        return torch.cat((child, parent, torch.abs(child - parent), child * parent), dim=-1)
     return child
 
 
@@ -18,14 +22,37 @@ class PairClassifier(nn.Module):
         self.encoder = encoder
         self.mode = mode
         size = encoder.config.hidden_size
-        self.head = nn.Sequential(nn.Dropout(dropout), nn.Linear(size, size), nn.GELU(), nn.Linear(size, num_labels))
+        input_size = {"concat_cls": 2 * size, "pair_interaction": 4 * size}.get(mode, size)
+        self.head = nn.Sequential(nn.Dropout(dropout), nn.Linear(input_size, size), nn.GELU(), nn.Linear(size, num_labels))
+
+    def representations(self, child, parent, positions):
+        hidden = self.encoder(**child).last_hidden_state
+        index = positions if self.mode in ("diff_cls", "concat_cls", "pair_interaction", "diff_only") else torch.zeros_like(positions)
+        hc = hidden[torch.arange(hidden.size(0), device=hidden.device), index]
+        hp = self.encoder(**parent).last_hidden_state[:, 0] if self.mode in ("diff_cls", "concat_cls", "pair_interaction", "cls_cls") else None
+        return hc, hp
 
     def forward(self, child, parent, positions):
-        hidden = self.encoder(**child).last_hidden_state
-        index = positions if self.mode in ("diff_cls", "diff_only") else torch.zeros_like(positions)
-        hc = hidden[torch.arange(hidden.size(0), device=hidden.device), index]
-        hp = self.encoder(**parent).last_hidden_state[:, 0] if self.mode in ("diff_cls", "cls_cls") else None
+        hc, hp = self.representations(child, parent, positions)
         return self.head(feature_vector(hc, hp, self.mode))
+
+
+def contrastive_loss(child, parent, parent_keys, temperature):
+    """Symmetric multi-positive InfoNCE: every occurrence of the same head is positive.
+
+    Returns None if there are no negative heads in the batch. Logits use L2-normalized
+    raw representations; downstream features use the unnormalized states.
+    """
+    if len(parent_keys) != len(child) or temperature <= 0:
+        raise ValueError("Invalid contrastive inputs")
+    if len(set(parent_keys)) < 2:
+        return None
+    logits = torch.nn.functional.normalize(child, dim=-1) @ torch.nn.functional.normalize(parent, dim=-1).T
+    logits = logits / temperature
+    mask = torch.tensor([[a == b for b in parent_keys] for a in parent_keys], dtype=torch.bool, device=logits.device)
+    def loss_axis(scores, positives):
+        return (torch.logsumexp(scores, dim=1) - torch.logsumexp(scores.masked_fill(~positives, float('-inf')), dim=1)).mean()
+    return (loss_axis(logits, mask) + loss_axis(logits.T, mask.T)) / 2
 
 
 class Collator:
@@ -51,7 +78,7 @@ class Collator:
         child = encode(text)
         parent = encode([r["parent"] for r in rows])
         positions = torch.zeros(len(rows), dtype=torch.long)
-        if self.mode in ("diff_cls", "diff_only"):
+        if self.mode in ("diff_cls", "concat_cls", "pair_interaction", "diff_only"):
             mask = child["input_ids"] == self.tokenizer.convert_tokens_to_ids("[DIFF]")
             if not torch.all(mask.sum(1) == 1):
                 raise ValueError("Each child requires exactly one registered DIFF token")
