@@ -23,7 +23,7 @@ def main():
     for flag in ("train", "dev", "output"):
         train_parser.add_argument("--" + flag, required=True)
     train_parser.add_argument("--model", default="google-bert/bert-base-multilingual-cased")
-    train_parser.add_argument("--mode", choices=["diff_cls", "concat_cls", "pair_interaction", "cls_cls", "diff_only", "modifier_only"], default="diff_cls")
+    train_parser.add_argument("--mode", choices=["diff_cls", "concat_cls", "pair_interaction", "cls_cls", "diff_only", "modifier_only", "compound_cls", "marked_cls", "marked_cls_diff"], default="diff_cls")
     train_parser.add_argument("--epochs", type=int, default=5)
     train_parser.add_argument("--batch-size", type=int, default=16)
     train_parser.add_argument("--lr", type=float, default=2e-5)

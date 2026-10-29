@@ -43,3 +43,25 @@ def test_actual_marker_and_cls_selection():
     m.head=torch.nn.Identity()
     actual=m({'input_ids':torch.tensor([[1,8,4]])},{'input_ids':torch.tensor([[2,7]])},torch.tensor([1]))
     assert torch.equal(actual,torch.tensor([[6.,6.]]))
+
+
+def test_compound_and_marker_controls(tokenizer):
+    plain, _, _, _, _ = Collator(tokenizer, {'material': 0}, 'compound_cls')([row()])
+    marked, _, _, _, _ = Collator(tokenizer, {'material': 0}, 'marked_cls')([row()])
+    marked_diff, _, _, _, _ = Collator(tokenizer, {'material': 0}, 'marked_cls_diff')([row()])
+    marker = tokenizer.convert_tokens_to_ids('[DIFF]')
+    assert marker not in plain['input_ids']
+    assert marker in marked['input_ids']
+    assert torch.equal(marked['input_ids'], marked_diff['input_ids'])
+
+
+def test_marked_cls_and_subtraction_use_cls_not_marker():
+    class Encoder(torch.nn.Module):
+        config = SimpleNamespace(hidden_size=2)
+        def forward(self, input_ids):
+            return SimpleNamespace(last_hidden_state=input_ids.float().unsqueeze(-1).repeat(1, 1, 2))
+    for mode, expected in [('marked_cls', 1.), ('marked_cls_diff', -1.)]:
+        m = PairClassifier(Encoder(), 2, mode)
+        m.head = torch.nn.Identity()
+        actual = m({'input_ids': torch.tensor([[1, 8, 4]])}, {'input_ids': torch.tensor([[2, 7]])}, torch.tensor([1]))
+        assert torch.equal(actual, torch.tensor([[expected, expected]]))

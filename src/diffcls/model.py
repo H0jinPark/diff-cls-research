@@ -1,11 +1,11 @@
 import torch
 from torch import nn
 
-MODES = ("diff_cls", "concat_cls", "pair_interaction", "cls_cls", "diff_only", "modifier_only")
+MODES = ("diff_cls", "concat_cls", "pair_interaction", "cls_cls", "diff_only", "modifier_only", "compound_cls", "marked_cls", "marked_cls_diff")
 
 
 def feature_vector(child, parent, mode):
-    if mode in ("diff_cls", "cls_cls"):
+    if mode in ("diff_cls", "cls_cls", "marked_cls_diff"):
         return child - parent
     if mode == "concat_cls":
         return torch.cat((child, parent), dim=-1)
@@ -29,7 +29,7 @@ class PairClassifier(nn.Module):
         hidden = self.encoder(**child).last_hidden_state
         index = positions if self.mode in ("diff_cls", "concat_cls", "pair_interaction", "diff_only") else torch.zeros_like(positions)
         hc = hidden[torch.arange(hidden.size(0), device=hidden.device), index]
-        hp = self.encoder(**parent).last_hidden_state[:, 0] if self.mode in ("diff_cls", "concat_cls", "pair_interaction", "cls_cls") else None
+        hp = self.encoder(**parent).last_hidden_state[:, 0] if self.mode in ("diff_cls", "concat_cls", "pair_interaction", "cls_cls", "marked_cls_diff") else None
         return hc, hp
 
     def forward(self, child, parent, positions):
@@ -64,7 +64,7 @@ class Collator:
     def __call__(self, rows):
         if self.mode == "modifier_only":
             text = [r["modifier"] for r in rows]
-        elif self.mode == "cls_cls":
+        elif self.mode in ("cls_cls", "compound_cls"):
             text = [r["child"] for r in rows]
         else:
             text = [r["child_prefix"] + " [DIFF] " + r["child_suffix"] for r in rows]
