@@ -8,3 +8,7 @@ runs/
 data/private/
 data/splits/
 data/benchmarks/
+
+.env
+.env.*
+!.env.example
